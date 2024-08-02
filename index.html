@@ -1,0 +1,684 @@
+<!DOCTYPE html><html><head><base href="https://supermarioworld.io/"><title>Super Mario World (WS Port)</title><style>
+body, html {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    font-family: 'Press Start 2P', cursive;
+}
+#gameCanvas {
+    display: block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+}
+#debugPanel {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background-color: rgba(0, 0, 0, 0.7);
+    color: white;
+    padding: 10px;
+    border-radius: 5px;
+}
+#debugPanel button, #debugPanel select {
+    margin: 5px;
+    font-family: 'Press Start 2P', cursive;
+}
+#codeOutput {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 20px;
+    border-radius: 10px;
+    display: none;
+    max-width: 80%;
+    max-height: 80%;
+    overflow: auto;
+}
+#codeOutput pre {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+</style>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&amp;display=swap" rel="stylesheet">
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<div id="debugPanel">
+    <button id="debugToggle" style="display: none;">Toggle Debug Mode</button>
+    <select id="objectType" style="display: none;">
+        <option value="Square">Square</option>
+        <option value="Enemy">Enemy</option>
+    </select>
+    <button id="eraseMode" style="display: none;">Erase Mode: OFF</button>
+    <button id="finishButton" style="display: none;">Finish</button>
+</div>
+<div id="codeOutput">
+    <pre id="codeText"></pre>
+    <button id="closeCode">Close</button>
+</div>
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+// Enable crisp edges for point sampling
+ctx.imageSmoothingEnabled = false;
+
+const GRID_SIZE = 32; // Size of each grid cell
+const SCALE_FACTOR = 1.5; // Scale factor for background
+const GROUND_SCALE_FACTOR = 2; // Increased scale factor for ground
+
+const game = {
+    player: {
+        x: 50,
+        y: canvas.height - 100,
+        width: 58,
+        height: 60,
+        speedX: 0,
+        speedY: 0,
+        normalMaxSpeedX: 5,
+        fastMaxSpeedX: 8,
+        currentMaxSpeedX: 5,
+        acceleration: 0.5,
+        sprintAcceleration: 0.1,
+        deceleration: 0.2,
+        minJumpForce: -7,
+        maxJumpForce: -10,
+        gravity: 0.6,
+        isJumping: false,
+        isFalling: false,
+        jumpStartTime: 0,
+        jumpReleaseTime: 0,
+        idleSprite: new Image(),
+        jumpSprite: new Image(),
+        fallSprite: new Image(),
+        walkSprite1: new Image(),
+        walkSprite2: new Image(),
+        runSprite1: new Image(),
+        runSprite2: new Image(),
+        spinSprite1: new Image(),
+        spinSprite2: new Image(),
+        spinSprite3: new Image(),
+        spinSprite4: new Image(),
+        facingRight: true,
+        isMoving: false,
+        walkAnimationTimer: 0,
+        currentWalkSprite: 0,
+        runAnimationTimer: 0,
+        currentRunSprite: 0,
+        runningStartTime: 0,
+        canMicroJump: true,
+        microJumpForce: -8,
+        isSpinning: false,
+        spinAnimationTimer: 0,
+        currentSpinSprite: 0
+    },
+    ground: {
+        y: canvas.height - 50 * GROUND_SCALE_FACTOR,
+        height: 50 * GROUND_SCALE_FACTOR,
+        texture: new Image(),
+        belowTexture: new Image()
+    },
+    background: {
+        texture: new Image()
+    },
+    keys: {
+        left: false,
+        right: false,
+        up: false,
+        f: false,
+        d: false
+    },
+    audio: {
+        jump: new Audio('https://cdn.discordapp.com/attachments/1267572402104307755/1268197975469981799/smw_jump.wav?ex=66ab8ce7&is=66aa3b67&hm=29d73d658d73989734e82a9b12bbf5e123cda1d34f44c092cb5539a69f5a1c04&'),
+        spin: new Audio('https://file.garden/ZqoCy6hJuCvIIu3J/youtube_MnzzjRu80kU_audio.mp3')
+    },
+    debug: {
+        active: false,
+        objects: [],
+        eraseMode: false
+    }
+};
+
+game.player.idleSprite.src = 'https://file.garden/ZqoCy6hJuCvIIu3J/MARIO_IDLE.png';
+game.player.jumpSprite.src = 'https://file.garden/ZqoCy6hJuCvIIu3J/MARIO_JUMP.png';
+game.player.fallSprite.src = 'https://file.garden/ZqoCy6hJuCvIIu3J/MARIO_FALL.png';
+game.player.walkSprite1.src = 'https://file.garden/ZqoCy6hJuCvIIu3J/MARIO_WALK_1.png';
+game.player.walkSprite2.src = 'https://file.garden/ZqoCy6hJuCvIIu3J/MARIO_WALK_2.png';
+game.player.runSprite1.src = 'https://file.garden/ZqoCy6hJuCvIIu3J/MARIO_RUN_1.png';
+game.player.runSprite2.src = 'https://file.garden/ZqoCy6hJuCvIIu3J/MARIO_RUN_2.png';
+game.player.spinSprite1.src = 'https://media.discordapp.net/attachments/1267572402104307755/1268521089097531542/MARIO_SPIN_1.png?ex=66acb9d3&is=66ab6853&hm=be94eae79931cad38075499295a6b697cfa695ecb450679b4f01a4a8608b136e&=&format=webp&quality=lossless';
+game.player.spinSprite2.src = 'https://media.discordapp.net/attachments/1267572402104307755/1268521089328222268/MARIO_SPIN_2.png?ex=66acb9d3&is=66ab6853&hm=4ec34ba5eb6541f1fae88b2dae15c367906739aba5b61e83faa79a5c1c9f2719&=&format=webp&quality=lossless';
+game.player.spinSprite3.src = 'https://media.discordapp.net/attachments/1267572402104307755/1268521089605308416/MARIO_SPIN_3.png?ex=66acb9d3&is=66ab6853&hm=9be8db13255619001ccb3df0e53632cf89f996fc32a2807c162af4a3847b0364&=&format=webp&quality=lossless';
+game.player.spinSprite4.src = 'https://media.discordapp.net/attachments/1267572402104307755/1268521089806503966/MARIO_SPIN_4.png?ex=66acb9d3&is=66ab6853&hm=e5b3d7b3876d589bb954db62885500e3cc9fc342d0dc034d5a505e1d4959233c&=&format=webp&quality=lossless';
+game.ground.texture.src = 'https://file.garden/ZqoCy6hJuCvIIu3J/SMW_GROUND.png';
+game.ground.belowTexture.src = 'https://file.garden/ZqoCy6hJuCvIIu3J/SMW_BELOW_GROUND.png';
+game.background.texture.src = 'https://file.garden/ZqoCy6hJuCvIIu3J/SMW_BG.png';
+
+function updatePlayerPosition() {
+    const previousSpeedX = game.player.speedX;
+
+    // Update max speed based on F key
+    if (game.keys.f) {
+        game.player.currentMaxSpeedX = Math.min(game.player.currentMaxSpeedX + game.player.sprintAcceleration, game.player.fastMaxSpeedX);
+    } else {
+        game.player.currentMaxSpeedX = game.player.normalMaxSpeedX;
+    }
+
+    // Horizontal movement
+    if (game.keys.left) {
+        game.player.speedX = Math.max(game.player.speedX - game.player.acceleration, -game.player.currentMaxSpeedX);
+        game.player.isMoving = true;
+    } else if (game.keys.right) {
+        game.player.speedX = Math.min(game.player.speedX + game.player.acceleration, game.player.currentMaxSpeedX);
+        game.player.isMoving = true;
+    } else {
+        // Decelerate when no key is pressed
+        if (game.player.speedX > 0) {
+            game.player.speedX = Math.max(game.player.speedX - game.player.deceleration, 0);
+        } else if (game.player.speedX < 0) {
+            game.player.speedX = Math.min(game.player.speedX + game.player.deceleration, 0);
+        }
+        game.player.isMoving = Math.abs(game.player.speedX) > 0.1;
+    }
+
+    // Check if direction changed
+    if ((previousSpeedX <= 0 && game.player.speedX > 0) || (previousSpeedX >= 0 && game.player.speedX < 0)) {
+        game.player.facingRight = game.player.speedX > 0;
+    }
+
+    // Apply horizontal movement
+    let newX = game.player.x + game.player.speedX;
+    
+    // Prevent player from moving past the starting point or the right edge of the screen
+    if (newX < 50) {
+        newX = 50;
+        game.player.speedX = 0;
+    } else if (newX + game.player.width > canvas.width) {
+        newX = canvas.width - game.player.width;
+        game.player.speedX = 0;
+    }
+    
+    game.player.x = newX;
+
+    // Check horizontal collisions
+    game.debug.objects.forEach(obj => {
+        if (obj.type === 'Square' && checkCollision(game.player, obj) && obj.hasCollision) {
+            if (game.player.speedX > 0) {
+                game.player.x = obj.x - game.player.width;
+            } else if (game.player.speedX < 0) {
+                game.player.x = obj.x + obj.width;
+            }
+            game.player.speedX = 0;
+            game.player.isSpinning = false;
+        }
+    });
+
+    // Vertical movement (jumping)
+    if (game.keys.up && !game.player.isJumping && !game.player.isFalling) {
+        game.player.isJumping = true;
+        game.player.isFalling = false;
+        game.player.jumpStartTime = Date.now();
+        game.player.jumpReleaseTime = null;
+        game.audio.jump.currentTime = 0;
+        game.audio.jump.play();
+    }
+
+    // Micro jump (can be performed in the air now)
+    if (game.keys.d && game.player.canMicroJump) {
+        game.player.speedY = game.player.microJumpForce;
+        game.player.isSpinning = true;
+        game.player.spinAnimationTimer = 0;
+        game.player.currentSpinSprite = 0;
+        game.player.canMicroJump = false;
+        game.audio.spin.currentTime = 0;
+        game.audio.spin.play();
+        setTimeout(() => {
+            game.player.canMicroJump = true;
+        }, 500); // 500ms cooldown for micro jump
+    }
+
+    if (game.player.isJumping) {
+        if (game.keys.up) {
+            const jumpDuration = Date.now() - game.player.jumpStartTime;
+            const maxJumpDuration = 250;
+            if (jumpDuration < maxJumpDuration) {
+                const jumpProgress = jumpDuration / maxJumpDuration;
+                const jumpForce = game.player.minJumpForce + (game.player.maxJumpForce - game.player.minJumpForce) * jumpProgress;
+                game.player.speedY = jumpForce;
+            } else {
+                if (!game.player.jumpReleaseTime) {
+                    game.player.jumpReleaseTime = Date.now();
+                }
+            }
+        } else if (!game.player.jumpReleaseTime) {
+            game.player.jumpReleaseTime = Date.now();
+        }
+
+        // Check if 0.25 seconds have passed since jump key was released
+        if (game.player.jumpReleaseTime && Date.now() - game.player.jumpReleaseTime >= 250) {
+            game.player.isFalling = true;
+        }
+    }
+
+    // Apply gravity
+    game.player.speedY += game.player.gravity;
+
+    // Apply vertical movement
+    let newY = game.player.y + game.player.speedY;
+    game.player.y = newY;
+
+    // Check vertical collisions
+    let onGround = false;
+    game.debug.objects.forEach(obj => {
+        if (obj.type === 'Square' && checkCollision(game.player, obj) && obj.hasCollision) {
+            if (game.player.speedY > 0) {
+                game.player.y = obj.y - game.player.height;
+                onGround = true;
+            } else if (game.player.speedY < 0) {
+                game.player.y = obj.y + obj.height;
+            }
+            game.player.speedY = 0;
+            game.player.isSpinning = false;
+        }
+    });
+
+    // Check collisions with enemies
+    game.debug.objects.forEach(obj => {
+        if (obj.type === 'Enemy') {
+            if (checkCollision(game.player, obj)) {
+                respawnPlayer();
+            }
+            // Move enemy
+            let newEnemyX = obj.x + obj.speed;
+            let enemyCollided = false;
+            game.debug.objects.forEach(otherObj => {
+                if (otherObj !== obj && otherObj.type === 'Square' && otherObj.hasCollision) {
+                    if (checkCollision({x: newEnemyX, y: obj.y, width: obj.width, height: obj.height}, otherObj)) {
+                        enemyCollided = true;
+                    }
+                }
+            });
+            if (enemyCollided) {
+                obj.speed *= -1;
+            } else {
+                obj.x = newEnemyX;
+            }
+            if (obj.x <= 0 || obj.x + obj.width >= canvas.width) {
+                obj.speed *= -1;
+            }
+            // Apply gravity to enemy
+            obj.speedY += game.player.gravity;
+            let newEnemyY = obj.y + obj.speedY;
+            let enemyOnGround = false;
+            game.debug.objects.forEach(otherObj => {
+                if (otherObj !== obj && otherObj.type === 'Square' && otherObj.hasCollision) {
+                    if (checkCollision({x: obj.x, y: newEnemyY, width: obj.width, height: obj.height}, otherObj)) {
+                        newEnemyY = otherObj.y - obj.height;
+                        enemyOnGround = true;
+                    }
+                }
+            });
+            if (newEnemyY + obj.height > game.ground.y) {
+                newEnemyY = game.ground.y - obj.height;
+                enemyOnGround = true;
+            }
+            obj.y = newEnemyY;
+            if (enemyOnGround) {
+                obj.speedY = 0;
+            }
+        }
+    });
+
+    // Check if player has landed on the ground
+    if (game.player.y + game.player.height >= game.ground.y) {
+        game.player.y = game.ground.y - game.player.height;
+        onGround = true;
+    }
+
+    if (onGround) {
+        game.player.isJumping = false;
+        game.player.isFalling = false;
+        game.player.speedY = 0;
+        game.player.jumpReleaseTime = null;
+        game.player.isSpinning = false;
+    } else if (!game.player.isJumping) {
+        game.player.isFalling = true;
+    }
+
+    // Update walk/run animation
+    if (game.player.isMoving) {
+        if (game.keys.f) {
+            if (game.player.runningStartTime === 0) {
+                game.player.runningStartTime = Date.now();
+            }
+            const runningDuration = Date.now() - game.player.runningStartTime;
+            if (runningDuration >= 500) { // 0.5 seconds
+                game.player.runAnimationTimer += 1;
+                if (game.player.runAnimationTimer >= 12) { // 12 frames at 60fps is 0.2 seconds
+                    game.player.runAnimationTimer = 0;
+                    game.player.currentRunSprite = 1 - game.player.currentRunSprite;
+                }
+            } else {
+                // Continue walking animation until 0.5 seconds have passed
+                game.player.walkAnimationTimer += 1;
+                if (game.player.walkAnimationTimer >= 9) { // 9 frames at 60fps is approximately 0.15 seconds
+                    game.player.walkAnimationTimer = 0;
+                    game.player.currentWalkSprite = 1 - game.player.currentWalkSprite;
+                }
+            }
+        } else {
+            game.player.runningStartTime = 0;
+            game.player.walkAnimationTimer += 1;
+            if (game.player.walkAnimationTimer >= 9) { // 9 frames at 60fps is approximately 0.15 seconds
+                game.player.walkAnimationTimer = 0;
+                game.player.currentWalkSprite = 1 - game.player.currentWalkSprite;
+            }
+        }
+    } else {
+        game.player.walkAnimationTimer = 0;
+        game.player.currentWalkSprite = 0;
+        game.player.runAnimationTimer = 0;
+        game.player.currentRunSprite = 0;
+        game.player.runningStartTime = 0;
+    }
+
+    // Update spin animation
+    if (game.player.isSpinning) {
+        game.player.spinAnimationTimer += 1;
+        if (game.player.spinAnimationTimer >= 6) { // 6 frames at 60fps is 0.1 seconds
+            game.player.spinAnimationTimer = 0;
+            game.player.currentSpinSprite = (game.player.currentSpinSprite + 1) % 4;
+        }
+    }
+}
+
+function checkCollision(a, b) {
+    return a.x < b.x + b.width &&
+           a.x + a.width > b.x &&
+           a.y < b.y + b.height &&
+           a.y + a.height > b.y;
+}
+
+function respawnPlayer() {
+    game.player.x = 50;
+    game.player.y = canvas.height - 100;
+    game.player.speedX = 0;
+    game.player.speedY = 0;
+    game.player.isSpinning = false;
+}
+
+function drawMario() {
+    let sprite;
+    if (game.player.isSpinning) {
+        switch (game.player.currentSpinSprite) {
+            case 0: sprite = game.player.spinSprite1; break;
+            case 1: sprite = game.player.spinSprite2; break;
+            case 2: sprite = game.player.spinSprite3; break;
+            case 3: sprite = game.player.spinSprite4; break;
+        }
+    } else if (game.player.isJumping) {
+        if (game.player.isFalling) {
+            sprite = game.player.fallSprite;
+        } else {
+            sprite = game.player.jumpSprite;
+        }
+    } else if (game.player.isMoving) {
+        if (game.keys.f && Date.now() - game.player.runningStartTime >= 500) {
+            sprite = game.player.currentRunSprite === 0 ? game.player.runSprite1 : game.player.runSprite2;
+        } else {
+            sprite = game.player.currentWalkSprite === 0 ? game.player.walkSprite1 : game.player.walkSprite2;
+        }
+    } else {
+        sprite = game.player.idleSprite;
+    }
+    
+    ctx.save();
+    if (!game.player.facingRight) {
+        ctx.scale(-1, 1);
+        ctx.drawImage(sprite, -game.player.x - game.player.width, game.player.y, game.player.width, game.player.height);
+    } else {
+        ctx.drawImage(sprite, game.player.x, game.player.y, game.player.width, game.player.height);
+    }
+    ctx.restore();
+}
+
+function drawBackground() {
+    const bgWidth = game.background.texture.width * SCALE_FACTOR;
+    const bgHeight = game.background.texture.height * SCALE_FACTOR;
+    
+    // Draw the background image once to fit the canvas
+    ctx.drawImage(
+        game.background.texture,
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+}
+
+function drawGround() {
+    const groundWidth = game.ground.texture.width * GROUND_SCALE_FACTOR;
+    const groundHeight = game.ground.texture.height * GROUND_SCALE_FACTOR;
+    const repetitions = Math.ceil(canvas.width / groundWidth) + 1;
+
+    for (let i = 0; i < repetitions; i++) {
+        ctx.drawImage(
+            game.ground.texture,
+            i * groundWidth,
+            game.ground.y,
+            groundWidth,
+            groundHeight
+        );
+    }
+
+    // Draw the below ground texture
+    const belowGroundHeight = canvas.height - game.ground.y - groundHeight;
+    for (let i = 0; i < repetitions; i++) {
+        ctx.drawImage(
+            game.ground.belowTexture,
+            i * groundWidth,
+            game.ground.y + groundHeight,
+            groundWidth,
+            belowGroundHeight
+        );
+    }
+}
+
+function drawDebugObjects() {
+    game.debug.objects.forEach(obj => {
+        ctx.fillStyle = obj.type === 'Square' ? (obj.hasCollision ? 'rgba(0, 0, 255, 0.5)' : 'rgba(255, 0, 0, 0.5)') : 'rgba(0, 255, 0, 0.5)';
+        ctx.fillRect(obj.x, obj.y, obj.width, obj.height);
+    });
+}
+
+function gameLoop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw background
+    drawBackground();
+
+    // Draw ground
+    drawGround();
+
+    // Draw debug objects
+    drawDebugObjects();
+
+    // Update and draw player
+    updatePlayerPosition();
+    drawMario();
+
+    requestAnimationFrame(gameLoop);
+}
+
+// Debug mode setup
+const debugToggle = document.getElementById('debugToggle');
+const objectType = document.getElementById('objectType');
+const eraseMode = document.getElementById('eraseMode');
+const finishButton = document.getElementById('finishButton');
+const codeOutput = document.getElementById('codeOutput');
+const codeText = document.getElementById('codeText');
+const closeCode = document.getElementById('closeCode');
+
+debugToggle.addEventListener('click', () => {
+    game.debug.active = !game.debug.active;
+    objectType.style.display = game.debug.active ? 'inline-block' : 'none';
+    eraseMode.style.display = game.debug.active ? 'inline-block' : 'none';
+    finishButton.style.display = game.debug.active ? 'inline-block' : 'none';
+});
+
+eraseMode.addEventListener('click', () => {
+    game.debug.eraseMode = !game.debug.eraseMode;
+    eraseMode.textContent = `Erase Mode: ${game.debug.eraseMode ? 'ON' : 'OFF'}`;
+});
+
+finishButton.addEventListener('click', () => {
+    const code = generateCode();
+    codeText.textContent = code;
+    codeOutput.style.display = 'block';
+});
+
+closeCode.addEventListener('click', () => {
+    codeOutput.style.display = 'none';
+});
+
+function generateCode() {
+    let code = 'const levelObjects = [\n';
+    game.debug.objects.forEach(obj => {
+        code += `  { type: '${obj.type}', x: ${obj.x}, y: ${obj.y}, hasCollision: ${obj.hasCollision} },\n`;
+    });
+    code += '];\n\n';
+    code += 'function createLevelObjects() {\n';
+    code += '  levelObjects.forEach(obj => {\n';
+    code += '    if (obj.type === "Square") {\n';
+    code += '      createSquare(obj.x, obj.y, obj.hasCollision);\n';
+    code += '    } else if (obj.type === "Enemy") {\n';
+    code += '      createEnemy(obj.x, obj.y);\n';
+    code += '    }\n';
+    code += '  });\n';
+    code += '}\n';
+    return code;
+}
+
+canvas.addEventListener('click', (event) => {
+    if (game.debug.active) {
+        const rect = canvas.getBoundingClientRect();
+        let x = event.clientX - rect.left;
+        let y = event.clientY - rect.top;
+        
+        // Snap to grid
+        x = Math.floor(x / GRID_SIZE) * GRID_SIZE;
+        y = Math.floor(y / GRID_SIZE) * GRID_SIZE;
+
+        if (game.debug.eraseMode) {
+            // Erase mode: remove object at clicked position
+            game.debug.objects = game.debug.objects.filter(obj => 
+                !(x >= obj.x && x < obj.x + obj.width && y >= obj.y && y < obj.y + obj.height)
+            );
+        } else {
+            // Place new object
+            const newObject = {
+                type: objectType.value,
+                x: x,
+                y: y,
+                width: GRID_SIZE,
+                height: GRID_SIZE,
+                hasCollision: y < game.ground.y // Only objects above the ground have collision
+            };
+            
+            if (newObject.type === 'Enemy') {
+                newObject.speed = 2;
+                newObject.speedY = 0;
+            }
+            
+            game.debug.objects.push(newObject);
+        }
+    }
+});
+
+// Wait for images to load before starting the game loop
+let loadedImages = 0;
+const totalImages = 14; // Update this to match the number of images we're loading
+
+function imageLoaded() {
+    loadedImages++;
+    if (loadedImages === totalImages) {
+        gameLoop();
+    }
+}
+
+game.player.idleSprite.onload = imageLoaded;
+game.player.jumpSprite.onload = imageLoaded;
+game.player.fallSprite.onload = imageLoaded;
+game.player.walkSprite1.onload = imageLoaded;
+game.player.walkSprite2.onload = imageLoaded;
+game.player.runSprite1.onload = imageLoaded;
+game.player.runSprite2.onload = imageLoaded;
+game.player.spinSprite1.onload = imageLoaded;
+game.player.spinSprite2.onload = imageLoaded;
+game.player.spinSprite3.onload = imageLoaded;
+game.player.spinSprite4.onload = imageLoaded;
+game.ground.texture.onload = imageLoaded;
+game.ground.belowTexture.onload = imageLoaded;
+game.background.texture.onload = imageLoaded;
+
+document.addEventListener('keydown', (event) => {
+    switch(event.key) {
+        case 'ArrowLeft':
+            game.keys.left = true;
+            break;
+        case 'ArrowRight':
+            game.keys.right = true;
+            break;
+        case 'ArrowUp':
+        case ' ':
+            game.keys.up = true;
+            break;
+        case 'f':
+        case 'F':
+            game.keys.f = true;
+            break;
+        case 'd':
+        case 'D':
+            game.keys.d = true;
+            break;
+    }
+});
+
+document.addEventListener('keyup', (event) => {
+    switch(event.key) {
+        case 'ArrowLeft':
+            game.keys.left = false;
+            break;
+        case 'ArrowRight':
+            game.keys.right = false;
+            break;
+        case 'ArrowUp':
+        case ' ':
+            game.keys.up = false;
+            break;
+        case 'f':
+        case 'F':
+            game.keys.f = false;
+            break;
+        case 'd':
+        case 'D':
+            game.keys.d = false;
+            break;
+    }
+});
+
+window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    game.ground.y = canvas.height - game.ground.texture.height * GROUND_SCALE_FACTOR;
+    game.player.y = game.ground.y - game.player.height;
+});
+</script>
+</body></html>
